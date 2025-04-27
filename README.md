@@ -1,10 +1,19 @@
 # 高级颜色识别工具 - 全方位使用说明书
 
 作者：杜玛
+
 版权永久所有
+
 日期：2025年
+
 GitHub：https://github.com/duma520
+
 网站：https://github.com/duma520
+
+软件截图：
+
+![image](https://github.com/user-attachments/assets/1f2d5cf9-c9a0-4a46-ab33-5d547790c1e8)
+
 
 ## 目录
 
