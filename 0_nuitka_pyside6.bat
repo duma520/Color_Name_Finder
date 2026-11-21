@@ -1,0 +1,25 @@
+nuitka ^
+    --standalone ^
+    --enable-plugin=pyside6 ^
+    --windows-console-mode=disable ^
+    --nofollow-import-to=PyQt5 ^
+    --nofollow-import-to=PyQt6 ^
+    --nofollow-import-to=PySide2 ^
+    --include-module=PySide6 ^
+    --include-module=pyperclip ^
+    --include-module=PIL ^
+    --include-module=numpy ^
+    --include-module=PIL.ImageGrab ^
+    --include-module=PIL.Image ^
+    --include-module=PIL.ImageQt ^
+    --include-module=json ^
+    --include-module=os ^
+    --include-module=sys ^
+    --include-module=PySide6.QtWidgets ^
+    --include-module=PySide6.QtGui ^
+    --include-module=PySide6.QtCore ^
+    --include-data-files=*.json=./ ^
+    --windows-icon-from-ico=icon.ico ^
+    --jobs=4 ^
+    --output-dir=dist ^
+    Color_Name_Finder.py

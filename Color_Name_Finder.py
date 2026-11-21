@@ -1,15 +1,17 @@
 import sys
 import pyperclip
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QPushButton, 
-                            QTextEdit, QHBoxLayout, QGroupBox, QComboBox, QSpinBox, QColorDialog,
-                            QMenu, QAction, QMessageBox, QFileDialog, QScrollArea, QGridLayout)
-from PyQt5.QtGui import (QColor, QPixmap, QScreen, QPainter, QFont, QIcon, QPalette, QImage, 
-                        QClipboard)
-from PyQt5.QtCore import Qt, QTimer, QPoint, QSize
 from PIL import ImageGrab
 import numpy as np
 import json
 import os
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QPushButton, 
+                              QTextEdit, QHBoxLayout, QGroupBox, QComboBox, QSpinBox, QColorDialog,
+                              QMenu, QMessageBox, QFileDialog, QScrollArea, QGridLayout)
+from PySide6.QtGui import (QAction, QColor, QPixmap, QScreen, QPainter, QFont, QIcon, QPalette, QImage, 
+                          QClipboard, QCursor)  # 在这里添加 QCursor
+from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QSettings
+
 
 class ColorNameFinder:
     def __init__(self):
@@ -35,8 +37,6 @@ class ColorNameFinder:
                     return color_data.get('name', color_id)
         
         return None
-
-
 
     def load_color_databases(self):
         """加载各种颜色数据库"""
@@ -153,17 +153,20 @@ class ColorNameFinder:
         except ValueError:  # 空数据库时
             return "未知颜色", float('inf')
 
-
     def get_all_color_names(self, rgb):
-        """获取颜色的所有名称"""
+        """获取颜色的所有名称（搜索所有数据库，显示所有精确匹配，没有时才显示近似）"""
+        if not self.is_valid_rgb(rgb):
+            return ["无效颜色"]
+        
         r, g, b = rgb
         names = []
+        found_exact_match = False
         
         # 定义所有要检查的数据库
         databases = [
             ('国标', self.gb_colors),
             ('中国传统', self.chinese_traditional_colors),
-            ('CSS', self.css_colors),
+            ('CSS', self.chinese_traditional_colors),
             ('X11', self.x11_colors),
             ('RAL', self.ral_colors),
             ('Pantone', self.pantone_colors),
@@ -171,25 +174,29 @@ class ColorNameFinder:
             ('日本传统', self.japanese_colors)
         ]
         
-        # 特殊处理GB标准(嵌套字典结构)
-        for color_id, color_data in self.gb_colors.items():
-            if isinstance(color_data, dict) and 'rgb' in color_data and tuple(color_data['rgb']) == (r, g, b):
-                names.append(f"国标: {color_data.get('name', color_id)}")
-        
-        # 检查其他数据库(简单键值对结构)
-        for db_name, db in databases[1:]:
-            if (r, g, b) in db:
+        # 检查所有数据库
+        for db_name, db in databases:
+            if isinstance(db, dict):
+                # 处理嵌套字典结构
+                for color_id, color_data in db.items():
+                    if isinstance(color_data, dict) and 'rgb' in color_data:
+                        if tuple(color_data['rgb']) == (r, g, b):
+                            names.append(f"{db_name}: {color_data.get('name', color_id)}")
+                            found_exact_match = True
+                    elif color_data == (r, g, b):
+                        names.append(f"{db_name}: {color_id}")
+                        found_exact_match = True
+            elif (r, g, b) in db:
                 names.append(f"{db_name}: {db[(r, g, b)]}")
+                found_exact_match = True
         
-        # 如果没有找到精确匹配，查找最接近的颜色
-        if not names:
-            closest_name, distance = self.find_closest_color(rgb)
+        # 只有没有精确匹配时，才查找近似颜色
+        if not found_exact_match:
+            closest_name, distance = self.find_closest_color((r, g, b))
             names.append(f"近似: {closest_name} (Δ={distance})")
         
         return names
 
-
-    
     def get_color_formats(self, r, g, b):
         """获取不同格式的颜色值"""
         hex_color = f"#{r:02x}{g:02x}{b:02x}".upper()
@@ -282,7 +289,7 @@ class ColorPickerWindow(QMainWindow):
         super().__init__()
         
         self.color_finder = ColorNameFinder()
-        self.max_recent_colors = 100
+        self.max_recent_colors = 1000
         self.recent_colors = []
         self.favorite_colors = []
         
@@ -293,10 +300,15 @@ class ColorPickerWindow(QMainWindow):
         self.timer.timeout.connect(self.update_color)
         self.picking = False
         
+        # 设置防抖保存定时器（最近颜色等实时变化时延迟写盘，避免频繁IO）
+        self._settings_save_timer = QTimer(self)
+        self._settings_save_timer.setSingleShot(True)
+        self._settings_save_timer.setInterval(500)
+        self._settings_save_timer.timeout.connect(self.save_settings)
+        
         # 最近使用的颜色
         self.recent_colors = []
 
-        
         # 收藏的颜色
         self.favorite_colors = []
         
@@ -305,10 +317,11 @@ class ColorPickerWindow(QMainWindow):
         
     def initUI(self):
         self.setWindowTitle('高级颜色识别工具')
+        self.setWindowIcon(QIcon('icon.ico'))
         self.setGeometry(100, 100, 650, 700)
         
         # 设置窗口图标
-        self.setWindowIcon(QIcon(self.create_color_icon(QColor(255, 0, 0))))
+        # self.setWindowIcon(QIcon(self.create_color_icon(QColor(255, 0, 0))))
         
         # 主窗口布局
         central_widget = QWidget()
@@ -413,15 +426,19 @@ class ColorPickerWindow(QMainWindow):
         recent_widget = QWidget()
         recent_layout = QGridLayout(recent_widget)  # 改为网格布局
         recent_scroll.setWidget(recent_widget)
-        main_layout.addWidget(recent_scroll)
+        main_layout.addWidget(recent_group)
+        
+        recent_group_layout = QVBoxLayout()
+        recent_group_layout.addWidget(recent_scroll)
+        recent_group.setLayout(recent_group_layout)
 
         self.recent_color_buttons = []
-        columns = 10  # 每行显示10个颜色按钮
+        columns = 25  # 每行显示10个颜色按钮
         for i in range(self.max_recent_colors):
             btn = QPushButton()
             btn.setFixedSize(30, 30)
             btn.setStyleSheet("background-color: transparent; border: 1px solid gray;")
-            btn.clicked.connect(lambda _, idx=i: self.select_recent_color(idx))
+            btn.clicked.connect(lambda checked, idx=i: self.select_recent_color(idx))
             row = i // columns
             col = i % columns
             recent_layout.addWidget(btn, row, col)  # 使用网格布局添加按钮
@@ -548,21 +565,28 @@ class ColorPickerWindow(QMainWindow):
             return
             
         try:
-            # 获取鼠标位置
-            cursor_pos = QApplication.desktop().cursor().pos()
+            # 使用 QCursor 获取鼠标位置（正确的方式）
+            cursor_pos = QCursor.pos()
             
-            # 获取屏幕截图
+            # 获取屏幕
             screen = QApplication.primaryScreen()
-            pixmap = screen.grabWindow(0, cursor_pos.x(), cursor_pos.y(), 1, 1)
+            
+            # 直接抓取鼠标位置周围1x1像素的区域
+            pixmap = screen.grabWindow(0, 
+                                    cursor_pos.x(), 
+                                    cursor_pos.y(), 
+                                    1, 1)
             
             # 获取像素颜色
             image = pixmap.toImage()
-            color = QColor(image.pixel(0, 0))
-            r, g, b = color.red(), color.green(), color.blue()
-            
-            # 更新UI
-            self.update_color_display(r, g, b)
+            if not image.isNull():
+                color = QColor(image.pixel(0, 0))
+                r, g, b = color.red(), color.green(), color.blue()
+                
+                # 更新UI
+                self.update_color_display(r, g, b)
         except Exception as e:
+            print(f"拾取颜色出错: {str(e)}")
             self.statusBar().showMessage(f"拾取颜色出错: {str(e)}", 2000)
             self.stop_picking()
 
@@ -620,18 +644,24 @@ class ColorPickerWindow(QMainWindow):
             
         # 更新按钮显示
         self.update_recent_colors_buttons()
+        
+        # 实时自动保存最近颜色（防抖 500ms）
+        self._settings_save_timer.start()
     
     def update_recent_colors_buttons(self):
         """更新最近颜色按钮"""
-        for i in range(self.max_recent_colors):
-            if i < len(self.recent_colors):
-                r, g, b = self.recent_colors[i]
-                btn = self.recent_color_buttons[i]
-                btn.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid gray;")
-                btn.setToolTip(f"RGB: {r}, {g}, {b}")
-            else:
-                self.recent_color_buttons[i].setStyleSheet("background-color: transparent; border: 1px solid gray;")
-                self.recent_color_buttons[i].setToolTip("")
+        # 只更新可见区域按钮以提高性能
+        visible_count = min(200, len(self.recent_colors))  # 每次最多更新200个按钮
+        for i in range(visible_count):
+            r, g, b = self.recent_colors[i]
+            btn = self.recent_color_buttons[i]
+            btn.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid gray;")
+            btn.setToolTip(f"RGB: {r}, {g}, {b}")
+        
+        # 剩余按钮设为透明
+        for i in range(visible_count, self.max_recent_colors):
+            self.recent_color_buttons[i].setStyleSheet("background-color: transparent; border: 1px solid gray;")
+            self.recent_color_buttons[i].setToolTip("")
     
     def select_recent_color(self, index):
         """选择最近使用的颜色"""
@@ -820,11 +850,13 @@ class ColorPickerWindow(QMainWindow):
         """显示关于对话框"""
         about_text = """
         <h2>高级颜色识别工具</h2>
-        <p>版本: 2.0.6</p>
+        <p>版本: 3.0.0</p>
         <p>更新内容:</p>
         <ul>
-            <li>增加最近使用颜色显示数量到100个</li>
-            <li>优化颜色按钮布局</li>
+            <li>升级至 3.0.0 大版本</li>
+            <li>增加最近使用颜色显示数量到1000个</li>
+            <li>优化颜色按钮布局和性能</li>
+            <li>添加懒加载机制提升大数量显示效率</li>
         </ul>
         ...
         """
@@ -836,19 +868,25 @@ class ColorPickerWindow(QMainWindow):
     def load_settings(self):
         """加载设置"""
         try:
-            settings = QApplication.instance().settings = QSettings("ColorPicker", "AdvancedColorTool")
+            settings = QSettings("ColorPicker", "AdvancedColorTool")
             
             # 窗口大小和位置
             size = settings.value("window/size", QSize(650, 700))
-            self.resize(size)
+            if isinstance(size, QSize):
+                self.resize(size)
             
             pos = settings.value("window/position", QPoint(100, 100))
-            self.move(pos)
+            if isinstance(pos, QPoint):
+                self.move(pos)
             
             # 最近颜色
             recent_colors = settings.value("colors/recent", [])
             if recent_colors:
-                self.recent_colors = [tuple(color) for color in recent_colors]
+                # 处理可能存储为字符串的情况
+                self.recent_colors = []
+                for color in recent_colors:
+                    if isinstance(color, (tuple, list)):
+                        self.recent_colors.append(tuple(color))
                 self.update_recent_colors_buttons()
             
             # 收藏颜色
@@ -856,20 +894,23 @@ class ColorPickerWindow(QMainWindow):
             if favorite_colors:
                 self.favorite_colors = []
                 for fav in favorite_colors:
-                    self.favorite_colors.append({
-                        'rgb': tuple(fav['rgb']),
-                        'name': fav['name'],
-                        'hex': fav['hex']
-                    })
+                    if isinstance(fav, dict):
+                        rgb = fav.get('rgb', (0,0,0))
+                        if isinstance(rgb, (tuple, list)):
+                            self.favorite_colors.append({
+                                'rgb': tuple(rgb),
+                                'name': fav.get('name', '未知'),
+                                'hex': fav.get('hex', '#000000')
+                            })
                 self.update_favorites_list()
                 
-        except:
-            pass
+        except Exception as e:
+            print(f"加载设置出错: {e}")
     
     def save_settings(self):
         """保存设置"""
         try:
-            settings = QApplication.instance().settings = QSettings("ColorPicker", "AdvancedColorTool")
+            settings = QSettings("ColorPicker", "AdvancedColorTool")
             
             # 窗口大小和位置
             settings.setValue("window/size", self.size())
@@ -881,8 +922,8 @@ class ColorPickerWindow(QMainWindow):
             # 收藏颜色
             settings.setValue("colors/favorites", self.favorite_colors)
             
-        except:
-            pass
+        except Exception as e:
+            print(f"保存设置出错: {e}")
     
     def closeEvent(self, event):
         """关闭窗口事件"""
@@ -899,4 +940,4 @@ if __name__ == '__main__':
     window = ColorPickerWindow()
     window.show()
     
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
