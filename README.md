@@ -14,7 +14,6 @@ GitHub：https://github.com/duma520
 
 ![image](https://github.com/user-attachments/assets/1f2d5cf9-c9a0-4a46-ab33-5d547790c1e8)
 
-
 ## 目录
 
 1. [产品概述](#产品概述)
@@ -244,4 +243,4 @@ GitHub：https://github.com/duma520
 
 ---
 
-**版权声明**：本文档所有内容版权归杜玛所有，未经许可不得用于商业用途。允许个人和非营利组织在注明出处的前提下自由分享和使用。
+**版权声明**：本文档所有内容版权归杜玛所有，随本仓库以 AGPL-3.0 发布；任何人都可在注明出处的前提下自由分享和使用，包括商业用途。
